@@ -4,11 +4,12 @@ import { Button } from './ui/button';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { Download, User, Bot, Copy, Check } from 'lucide-react';
 import { useState } from 'react';
+import { chatAPI } from '../services/api';
 
 const ChatMessage = ({ message, onDownload }) => {
   const [copied, setCopied] = useState(false);
   const isUser = message.type === 'user';
-  const isImage = message.contentType === 'image';
+  const isImage = message.content_type === 'image';
 
   const handleCopy = async () => {
     if (isImage) return;
@@ -17,13 +18,17 @@ const ChatMessage = ({ message, onDownload }) => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownload = () => {
-    if (isImage) {
-      onDownload(message.content, `image-${message.id}.jpg`);
-    } else {
-      const blob = new Blob([message.content], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      onDownload(url, `message-${message.id}.txt`);
+  const handleDownload = async () => {
+    try {
+      if (isImage) {
+        await chatAPI.downloadMessage(message.id, `image-${message.id}.png`);
+      } else {
+        await chatAPI.downloadMessage(message.id, `message-${message.id}.txt`);
+      }
+      onDownload(`File ${isImage ? 'gambar' : 'teks'} berhasil diunduh`);
+    } catch (error) {
+      console.error('Download error:', error);
+      onDownload('Gagal mengunduh file', true);
     }
   };
 

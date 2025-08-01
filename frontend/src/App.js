@@ -6,16 +6,18 @@ import { useToast } from './hooks/use-toast';
 import ChatMessage from './components/ChatMessage';
 import ChatInput from './components/ChatInput';
 import SessionSidebar from './components/SessionSidebar';
-import { mockSessions, generateMockResponse } from './components/mock';
+import { chatAPI } from './services/api';
 import { Bot, Menu, X } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 
 const ChatInterface = () => {
-  const [sessions, setSessions] = useState(mockSessions);
-  const [activeSessionId, setActiveSessionId] = useState(mockSessions[0]?.id || null);
+  const [sessions, setSessions] = useState([]);
+  const [activeSessionId, setActiveSessionId] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(true);
   const messagesEndRef = useRef(null);
   const { toast } = useToast();
 
@@ -27,91 +29,120 @@ const ChatInterface = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [activeSession?.messages]);
+  }, [messages]);
+
+  // Load sessions on component mount
+  useEffect(() => {
+    loadSessions();
+  }, []);
+
+  // Load messages when active session changes
+  useEffect(() => {
+    if (activeSessionId) {
+      loadMessages(activeSessionId);
+    }
+  }, [activeSessionId]);
+
+  const loadSessions = async () => {
+    try {
+      setIsLoadingSessions(true);
+      const sessionsData = await chatAPI.getSessions();
+      setSessions(sessionsData);
+      
+      // Set first session as active if none selected
+      if (sessionsData.length > 0 && !activeSessionId) {
+        setActiveSessionId(sessionsData[0].id);
+      }
+    } catch (error) {
+      console.error('Error loading sessions:', error);
+      toast({
+        title: "Gagal memuat percakapan",
+        description: "Terjadi kesalahan saat memuat daftar percakapan",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  };
+
+  const loadMessages = async (sessionId) => {
+    try {
+      const messagesData = await chatAPI.getMessages(sessionId);
+      setMessages(messagesData);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+      toast({
+        title: "Gagal memuat pesan",
+        description: "Terjadi kesalahan saat memuat pesan percakapan",
+        variant: "destructive"
+      });
+    }
+  };
 
   const handleSendMessage = async (content, type) => {
     if (!activeSessionId) {
-      handleNewSession();
+      await handleNewSession();
       return;
     }
 
-    const userMessage = {
-      id: Date.now().toString(),
-      type: 'user',
-      content,
-      timestamp: new Date().toISOString()
-    };
-
-    // Add user message
-    setSessions(prev => prev.map(session => 
-      session.id === activeSessionId 
-        ? { ...session, messages: [...session.messages, userMessage] }
-        : session
-    ));
-
     setIsLoading(true);
-
-    // Simulate API delay
-    setTimeout(() => {
-      let assistantMessage;
+    
+    try {
+      // Send message and get AI response
+      const aiResponse = await chatAPI.sendMessage(activeSessionId, content, type);
       
-      if (type === 'image') {
-        assistantMessage = {
-          id: (Date.now() + 1).toString(),
-          type: 'assistant',
-          contentType: 'image',
-          content: generateMockResponse(content, 'image'),
-          prompt: content,
-          timestamp: new Date().toISOString()
-        };
-      } else {
-        assistantMessage = {
-          id: (Date.now() + 1).toString(),
-          type: 'assistant',
-          content: generateMockResponse(content, 'text') + ' ' + content,
-          timestamp: new Date().toISOString()
-        };
-      }
-
-      setSessions(prev => prev.map(session => 
-        session.id === activeSessionId 
-          ? { ...session, messages: [...session.messages, assistantMessage] }
-          : session
-      ));
-
-      setIsLoading(false);
+      // Reload messages to get the latest conversation
+      await loadMessages(activeSessionId);
+      
+      // Reload sessions to update timestamps and titles
+      await loadSessions();
       
       toast({
         title: type === 'image' ? "Gambar berhasil dibuat" : "Pesan terkirim",
         description: type === 'image' ? "AI telah membuat gambar sesuai permintaan Anda" : "AI telah merespons pesan Anda",
       });
-    }, 2000);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast({
+        title: "Gagal mengirim pesan",
+        description: "Terjadi kesalahan saat mengirim pesan. Silakan coba lagi.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleNewSession = () => {
-    const newSession = {
-      id: Date.now().toString(),
-      title: 'Percakapan Baru',
-      createdAt: new Date().toISOString(),
-      messages: []
-    };
-    
-    setSessions(prev => [newSession, ...prev]);
-    setActiveSessionId(newSession.id);
-    setIsSidebarOpen(false);
-    
-    toast({
-      title: "Percakapan baru dimulai",
-      description: "Anda dapat mulai mengobrol dengan AI assistant",
-    });
+  const handleNewSession = async () => {
+    try {
+      const newSession = await chatAPI.createSession();
+      
+      // Reload sessions and set new session as active
+      await loadSessions();
+      setActiveSessionId(newSession.id);
+      setMessages([]);
+      setIsSidebarOpen(false);
+      
+      toast({
+        title: "Percakapan baru dimulai",
+        description: "Anda dapat mulai mengobrol dengan AI assistant",
+      });
+    } catch (error) {
+      console.error('Error creating session:', error);
+      toast({
+        title: "Gagal membuat percakapan",
+        description: "Terjadi kesalahan saat membuat percakapan baru",
+        variant: "destructive"
+      });
+    }
   };
 
-  const handleSelectSession = (sessionId) => {
+  const handleSelectSession = async (sessionId) => {
     setActiveSessionId(sessionId);
     setIsSidebarOpen(false);
   };
 
-  const handleDeleteSession = (sessionId) => {
+  const handleDeleteSession = async (sessionId) => {
     if (sessions.length === 1) {
       toast({
         title: "Tidak dapat menghapus",
@@ -121,36 +152,57 @@ const ChatInterface = () => {
       return;
     }
 
-    setSessions(prev => prev.filter(s => s.id !== sessionId));
-    
-    if (activeSessionId === sessionId) {
-      const remainingSessions = sessions.filter(s => s.id !== sessionId);
-      setActiveSessionId(remainingSessions[0]?.id || null);
+    try {
+      await chatAPI.deleteSession(sessionId);
+      
+      // Reload sessions
+      await loadSessions();
+      
+      // If deleted session was active, select first remaining session
+      if (activeSessionId === sessionId) {
+        const remainingSessions = sessions.filter(s => s.id !== sessionId);
+        if (remainingSessions.length > 0) {
+          setActiveSessionId(remainingSessions[0].id);
+        } else {
+          setActiveSessionId(null);
+          setMessages([]);
+        }
+      }
+      
+      toast({
+        title: "Percakapan dihapus",
+        description: "Percakapan telah berhasil dihapus",
+      });
+    } catch (error) {
+      console.error('Error deleting session:', error);
+      toast({
+        title: "Gagal menghapus",
+        description: "Terjadi kesalahan saat menghapus percakapan",
+        variant: "destructive"
+      });
     }
-    
+  };
+
+  const handleDownload = (message, isError = false) => {
     toast({
-      title: "Percakapan dihapus",
-      description: "Percakapan telah berhasil dihapus",
+      title: isError ? "Gagal mengunduh" : "Unduhan berhasil",
+      description: message,
+      variant: isError ? "destructive" : "default"
     });
   };
 
-  const handleDownload = (url, filename) => {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    if (url.startsWith('blob:')) {
-      URL.revokeObjectURL(url);
-    }
-    
-    toast({
-      title: "Unduhan dimulai",
-      description: `File ${filename} sedang diunduh`,
-    });
-  };
+  if (isLoadingSessions) {
+    return (
+      <div className="flex h-screen bg-slate-100 items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-gradient-to-br from-slate-100 to-slate-200 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Bot className="h-8 w-8 text-slate-700 animate-pulse" />
+          </div>
+          <p className="text-slate-600">Memuat percakapan...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-100">
@@ -218,9 +270,9 @@ const ChatInterface = () => {
 
         {/* Messages area */}
         <div className="flex-1 overflow-y-auto">
-          {activeSession?.messages.length > 0 ? (
+          {messages.length > 0 ? (
             <div className="max-w-4xl mx-auto">
-              {activeSession.messages.map((message) => (
+              {messages.map((message) => (
                 <ChatMessage
                   key={message.id}
                   message={message}
@@ -235,7 +287,7 @@ const ChatInterface = () => {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 text-sm text-slate-500 mb-3">
                       <span className="font-medium">AI Assistant</span>
-                      <span>sedang mengetik...</span>
+                      <span>sedang memproses...</span>
                     </div>
                     <Card className="p-4 max-w-3xl bg-white border-slate-200">
                       <div className="flex gap-2">
